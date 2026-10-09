@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Protocol
 
 from app.engine.effects import apply_observe, apply_rest, apply_travel
+from app.engine.goals import interaction_allowed
 from app.engine.models import ActionCandidate, Character, GameEvent, Location, WorldState
 from app.engine.rng import CounterRNG
 
@@ -34,11 +35,20 @@ def choose_action(candidates: list[ActionCandidate], rng: CounterRNG) -> ActionC
     Every candidate consumes one draw, in a stable order, so seeds stay aligned.
     """
     best: ActionCandidate | None = None
-    best_key: tuple[int, float, str, str] | None = None
-    ordered = sorted(candidates, key=lambda item: (item.action_id, item.target or "", item.reason))
+    best_key: tuple[int, float, str, str, str] | None = None
+    ordered = sorted(
+        candidates,
+        key=lambda item: (item.action_id, item.target or "", item.target_character_id or "", item.reason),
+    )
     for candidate in ordered:
         roll = rng.random()
-        key = (candidate.score, roll, candidate.action_id, candidate.target or "")
+        key = (
+            candidate.score,
+            roll,
+            candidate.action_id,
+            candidate.target or "",
+            candidate.target_character_id or "",
+        )
         if best is None or best_key is None or key > best_key:
             best = candidate
             best_key = key
@@ -63,7 +73,7 @@ def run_npc_tick(
         valid = [
             candidate
             for candidate in behavior.candidates(npc, world)
-            if behavior.precondition(npc, world, candidate, locations)
+            if _candidate_allowed(behavior, npc, world, candidate, locations)
         ]
         if not valid:
             continue
@@ -76,6 +86,18 @@ def run_npc_tick(
                 raise RuntimeError("location changed without a resolved move")
         events.extend(produced)
     return events
+
+
+def _candidate_allowed(
+    behavior: Behavior,
+    npc: Character,
+    world: WorldState,
+    action: ActionCandidate,
+    locations: dict[str, Location],
+) -> bool:
+    if action.target_character_id is not None and not interaction_allowed(npc, world, action.target_character_id):
+        return False
+    return behavior.precondition(npc, world, action, locations)
 
 
 class NpcBehavior:

@@ -73,6 +73,9 @@ def dialogue_bundle() -> dict:
             "actions": {
                 "repair": "Чиню сеть на «{location}». Состояние: {grid_label}.",
                 "obtain_parts": "Забираю детали на «{location}». Без них ремонт встанет. Сеть: {grid_label}.",
+                "request_parts": "Прошу детали. Без них сеть не поднять. Состояние: {grid_label}.",
+                "carry_parts": "Несу детали с «{location}». В мастерскую, не в разговор. Сеть: {grid_label}.",
+                "deliver_parts": "Сдаю детали в мастерскую на «{location}». Сеть: {grid_label}.",
                 "rest": "Села передохнуть на «{location}». Руки уже не слушаются.",
                 "observe": "Смотрю схему на «{location}». Сеть: {grid_label}.",
                 "travel": "Иду туда, где сеть сейчас требует меня. Состояние: {grid_label}.",

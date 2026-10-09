@@ -199,7 +199,7 @@ export function App() {
       <header className="top">
         <div className="brand-block">
           <p className="brand">UNWRITTEN</p>
-          <p className="version">v0.0.1</p>
+          <p className="version">v0.0.2</p>
         </div>
         <p className="when">{world.day_label}</p>
         <p className="where">{world.location.name}</p>

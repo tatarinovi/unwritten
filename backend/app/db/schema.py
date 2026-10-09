@@ -21,6 +21,7 @@ class WorldMetaRow(Base):
     workshop_parts: Mapped[int] = mapped_column(Integer, nullable=False)
     tick_count: Mapped[int] = mapped_column(Integer, nullable=False)
     last_real_time: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    calendar_epoch: Mapped[int] = mapped_column(Integer, nullable=False, default=2036)
 
 
 class CharacterRow(Base):
@@ -32,7 +33,8 @@ class CharacterRow(Base):
     is_player: Mapped[bool] = mapped_column(Boolean, nullable=False)
     location_id: Mapped[str] = mapped_column(String(32), nullable=False)
     fatigue: Mapped[int] = mapped_column(Integer, nullable=False)
-    goal: Mapped[str] = mapped_column(String(160), nullable=False)
+    goal: Mapped[str] = mapped_column(Text, nullable=False)
+    carried_parts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     current_action: Mapped[str] = mapped_column(String(32), nullable=False)
     action_target: Mapped[str | None] = mapped_column(String(32), nullable=True)
     traits_json: Mapped[str] = mapped_column(Text, nullable=False)

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-GAME_START = datetime(2061, 4, 12, 8, 0, 0)
+GAME_START = datetime(2036, 4, 12, 8, 0, 0)
+# Saves written before the calendar fix store game time against this instant.
+OLD_GAME_START = datetime(2061, 4, 12, 8, 0, 0)
 MOVE_MINUTES = 10
 TALK_MINUTES = 5
 TICK_MINUTES = 10
@@ -37,6 +39,22 @@ MONTHS_SHORT = (
     "ноя",
     "дек",
 )
+
+
+def uses_old_epoch(moment: datetime) -> bool:
+    """True when a stored game clock is still counted from 12 April 2061."""
+    return moment >= OLD_GAME_START
+
+
+def shift_from_old_epoch(moment: datetime) -> datetime:
+    """Map a 2061-epoch game time onto the 2036 start, keeping elapsed duration.
+
+    `GAME_START + (moment - OLD_GAME_START)` keeps the clock time-of-day.
+    A save at 10:30 on the first morning stays 10:30 on 12 April 2036.
+    Leap days between the two anchors are inside the timedelta, so the
+    clock is not rebuilt by subtracting 25 from the year.
+    """
+    return GAME_START + (moment - OLD_GAME_START)
 
 
 def format_iso(moment: datetime) -> str:

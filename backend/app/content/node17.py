@@ -2,6 +2,15 @@ from __future__ import annotations
 
 from app.content.behaviors import EyraBehavior, IvarBehavior, MarekBehavior
 from app.content.dialogue_lines import dialogue_bundle as build_dialogue_bundle
+from app.content.goals import (
+    grid_goal,
+    legacy_long_term,
+    obtain_parts_goal,
+    ordinary_day_goal,
+    profit_goal,
+    security_goal,
+)
+from app.engine.goals import UNRESOLVED_LEGACY, ensure_active_goal
 from app.engine.models import Character, Location, WorldState
 from app.engine.npc import Behavior
 from app.engine.rng import CounterRNG
@@ -40,6 +49,9 @@ ACTION_LABELS = {
     "restock": "пополняет запас",
     "repair": "чинит сеть",
     "obtain_parts": "достаёт детали",
+    "request_parts": "просит детали",
+    "carry_parts": "несёт детали",
+    "deliver_parts": "сдаёт детали",
 }
 
 TALK_LABELS = {
@@ -169,7 +181,7 @@ class Node17Content:
                 is_player=True,
                 location_id="market",
                 fatigue=18,
-                goal="Прожить обычный день",
+                goals=[ordinary_day_goal()],
                 current_action="idle",
                 action_target=None,
                 traits=["местный"],
@@ -182,7 +194,7 @@ class Node17Content:
                 is_player=False,
                 location_id="city_gates",
                 fatigue=22,
-                goal="Безопасность поселения",
+                goals=[security_goal()],
                 current_action="patrol",
                 action_target=None,
                 traits=["осторожный", "ответственный", "недоверчивый"],
@@ -201,7 +213,7 @@ class Node17Content:
                 is_player=False,
                 location_id="market",
                 fatigue=16,
-                goal="Прибыль",
+                goals=[profit_goal()],
                 current_action="work",
                 action_target=None,
                 traits=["прагматичный", "общительный", "жадный"],
@@ -222,7 +234,7 @@ class Node17Content:
                 is_player=False,
                 location_id="workshop",
                 fatigue=20,
-                goal="Держать энергосеть",
+                goals=[grid_goal()],
                 current_action="repair",
                 action_target=None,
                 traits=["независимая", "упрямая", "любопытная"],
@@ -248,6 +260,37 @@ class Node17Content:
             last_real_time=None,
             characters=characters,
         )
+
+    def normalize_goals(self, state: WorldState) -> bool:
+        """Replace a v0.0.1 goal string with that character's long-term goal."""
+        changed = False
+        for character in state.characters.values():
+            upgraded = []
+            for goal in character.goals:
+                if goal.condition == UNRESOLVED_LEGACY or goal.id == "legacy":
+                    upgraded.append(legacy_long_term(character.id, goal.label))
+                    changed = True
+                else:
+                    upgraded.append(goal)
+            character.goals = upgraded
+        return changed
+
+    def sync_goals(self, state: WorldState) -> None:
+        """Give Eyra one active obtain-parts goal when the workshop cannot repair.
+
+        The goal is created when the grid needs work and workshop parts are 0,
+        and also while she is carrying a bundle that has not been delivered.
+        It is not removed when the grid recovers. The engine completes it only
+        when workshop_parts reaches the goal threshold, so it does not flicker.
+        """
+        eyra = state.characters.get("eyra")
+        if eyra is None:
+            return
+        repair_below = int(eyra.schedule.get("repair_below", 85))
+        cause = state.grid_condition < repair_below and state.workshop_parts <= 0
+        carrying = eyra.carried_parts > 0 and state.workshop_parts <= 0
+        if cause or carrying:
+            ensure_active_goal(eyra, obtain_parts_goal())
 
     def after_tick(self, state: WorldState, rng: CounterRNG) -> None:
         state.tick_count += 1

@@ -23,7 +23,7 @@ class DialogueSource(Protocol):
 class DialogueProvider(Protocol):
     """Asked by the World Engine for a line. It does not advance time or save state.
 
-    TemplateDialogueProvider is the v0.0.1 implementation. A later adapter can
+    TemplateDialogueProvider is the current implementation. A later adapter can
     call an LLM and return DialogueTurn without changes to the World Engine.
     """
 

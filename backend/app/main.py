@@ -30,7 +30,7 @@ def build_world(database_url: str, seed: int | None = None) -> WorldEngine:
 
 def create_app(database_url: str | None = None) -> FastAPI:
     engine = build_world(database_url or default_database_url())
-    app = FastAPI(title="UNWRITTEN", version="0.0.1")
+    app = FastAPI(title="UNWRITTEN", version="0.0.2")
     app.add_middleware(
         CORSMiddleware,
         allow_origins=[

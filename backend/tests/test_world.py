@@ -39,12 +39,16 @@ def npc_by_id(engine, npc_id: str) -> dict:
 
 def test_01_first_launch_creates_world_and_three_npcs(world) -> None:
     snap = world.snapshot()
-    assert snap["time"] == "2061-04-12T08:00:00"
-    assert snap["day_label"] == "12 апреля 2061, 08:00"
+    assert snap["time"] == "2036-04-12T08:00:00"
+    assert snap["day_label"] == "12 апреля 2036, 08:00"
     assert snap["location"]["id"] == "market"
     npcs = world.list_npcs()
     assert [npc["id"] for npc in npcs] == ["ivar", "marek", "eyra"]
     assert [npc["name"] for npc in npcs] == ["Ивар", "Марек", "Эйра"]
+    assert npc_by_id(world, "ivar")["goal"] == "Безопасность поселения"
+    assert npc_by_id(world, "marek")["goal"] == "Прибыль"
+    assert npc_by_id(world, "eyra")["goal"] == "Держать энергосеть"
+    assert npc_by_id(world, "eyra")["carried_parts"] == 0
     assert len({npc["id"] for npc in npcs}) == 3
     before = world.event_count()
     world.ensure_initialized()
@@ -63,7 +67,7 @@ def test_02_player_movement_changes_location(world) -> None:
 
 def test_03_action_advances_game_time(world) -> None:
     world.perform("wait", {"minutes": 60}, "wait-1")
-    assert world.snapshot()["time"] == "2061-04-12T09:00:00"
+    assert world.snapshot()["time"] == "2036-04-12T09:00:00"
 
 
 def test_04_npcs_act_when_time_advances(world) -> None:
@@ -136,9 +140,9 @@ def test_06_state_persists_after_restart(tmp_path: Path) -> None:
         assert snap["location"]["id"] == "workshop"
         assert snap["time"] == expected_time
         assert snap["player"]["fatigue"] == expected_fatigue
-        assert snap["time"] == "2061-04-12T08:10:00"
+        assert snap["time"] == "2036-04-12T08:10:00"
         restored.perform("wait", {"minutes": 10}, "after-restart")
-        assert restored.snapshot()["time"] == "2061-04-12T08:20:00"
+        assert restored.snapshot()["time"] == "2036-04-12T08:20:00"
         assert restored.snapshot()["location"]["id"] == "workshop"
     finally:
         restored.close()
@@ -148,12 +152,12 @@ def test_07_catchup_is_idempotent_for_the_same_window(world) -> None:
     start = datetime(2026, 6, 1, 8, 0, tzinfo=timezone.utc)
     anchored = world.resume(start)
     assert anchored["advanced_minutes"] == 0
-    assert world.snapshot()["time"] == "2061-04-12T08:00:00"
+    assert world.snapshot()["time"] == "2036-04-12T08:00:00"
 
     caught_up = world.resume(start + timedelta(hours=3))
     assert caught_up["advanced_minutes"] == 180
     assert caught_up["capped"] is False
-    assert world.snapshot()["time"] == "2061-04-12T11:00:00"
+    assert world.snapshot()["time"] == "2036-04-12T11:00:00"
     assert any(event["kind"] == "absence" for event in world.list_events(limit=5000))
     assert any(event["kind"].startswith("npc_") for event in world.list_events(limit=5000))
     count = world.event_count()
@@ -173,12 +177,12 @@ def test_07b_long_absence_is_capped_and_not_replayed(tmp_path: Path) -> None:
         capped = engine.resume(start + timedelta(hours=30))
         assert capped["advanced_minutes"] == 24 * 60
         assert capped["capped"] is True
-        assert engine.snapshot()["time"] == "2061-04-13T08:00:00"
+        assert engine.snapshot()["time"] == "2036-04-13T08:00:00"
         count = engine.event_count()
         replay = engine.resume(start + timedelta(hours=30))
         assert replay["advanced_minutes"] == 0
         assert engine.event_count() == count
-        assert engine.snapshot()["time"] == "2061-04-13T08:00:00"
+        assert engine.snapshot()["time"] == "2036-04-13T08:00:00"
     finally:
         engine.close()
 
@@ -187,25 +191,25 @@ def test_07c_active_play_is_not_replayed_as_absence(world) -> None:
     start = datetime(2026, 6, 1, 8, 0, tzinfo=timezone.utc)
     world.resume(start)
     world.perform("wait", {"minutes": 60}, "play-1", now=start + timedelta(minutes=30))
-    assert world.snapshot()["time"] == "2061-04-12T09:00:00"
+    assert world.snapshot()["time"] == "2036-04-12T09:00:00"
     count = world.event_count()
     again = world.resume(start + timedelta(minutes=30))
     assert again["advanced_minutes"] == 0
     assert world.event_count() == count
-    assert world.snapshot()["time"] == "2061-04-12T09:00:00"
+    assert world.snapshot()["time"] == "2036-04-12T09:00:00"
 
 
 def test_08_same_action_id_does_not_apply_twice(world) -> None:
     first = world.perform("move", {"location_id": "city_gates"}, "same-id")
     assert first["world"]["location"]["id"] == "city_gates"
-    assert first["world"]["time"] == "2061-04-12T08:10:00"
+    assert first["world"]["time"] == "2036-04-12T08:10:00"
     count = world.event_count()
     second = world.perform("move", {"location_id": "workshop"}, "same-id")
     assert second["replayed"] is True
     assert second["world"]["location"]["id"] == "city_gates"
     snap = world.snapshot()
     assert snap["location"]["id"] == "city_gates"
-    assert snap["time"] == "2061-04-12T08:10:00"
+    assert snap["time"] == "2036-04-12T08:10:00"
     assert world.event_count() == count
 
 
@@ -233,7 +237,7 @@ def test_10_failed_action_rolls_back(world) -> None:
     assert signature(world) == before
 
     world.perform("wait", {"minutes": 60}, "bad-wait")
-    assert world.snapshot()["time"] == "2061-04-12T09:00:00"
+    assert world.snapshot()["time"] == "2036-04-12T09:00:00"
 
 
 def test_dialogue_reflects_personality_and_state(world) -> None:
@@ -242,7 +246,7 @@ def test_dialogue_reflects_personality_and_state(world) -> None:
     assert "есть чем торговать" in low["line"]
     assert "Торговая площадь" in low["line"]
     assert len(low["options"]) >= 2
-    assert world.snapshot()["time"] == "2061-04-12T08:05:00"
+    assert world.snapshot()["time"] == "2036-04-12T08:05:00"
 
     world.update_for_test(
         character={"id": "marek", "fatigue": 92, "current_action": "rest", "location_id": "market"}

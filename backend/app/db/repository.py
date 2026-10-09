@@ -4,13 +4,22 @@ import json
 from contextlib import contextmanager
 from collections.abc import Iterator
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from app.db.schema import Base, CharacterRow, EventRow, ProcessedActionRow, WorldMetaRow
 from app.db.session import make_engine, make_session_factory
+from app.engine.goals import dump_goals, parse_stored_goals
 from app.engine.models import Character, GameEvent, WorldState
-from app.engine.timekeep import dump_real, format_iso, load_real, parse_game_time
+from app.engine.timekeep import (
+    GAME_START,
+    dump_real,
+    format_iso,
+    load_real,
+    parse_game_time,
+    shift_from_old_epoch,
+    uses_old_epoch,
+)
 
 
 class Repository:
@@ -37,6 +46,7 @@ class Repository:
             session.close()
 
     def has_world(self, session: Session) -> bool:
+        self._ensure_save_columns(session)
         return session.get(WorldMetaRow, 1) is not None
 
     def insert_world(self, session: Session, state: WorldState) -> None:
@@ -52,12 +62,15 @@ class Repository:
                 workshop_parts=state.workshop_parts,
                 tick_count=state.tick_count,
                 last_real_time=dump_real(state.last_real_time),
+                calendar_epoch=GAME_START.year,
             )
         )
         for character in state.characters.values():
             session.add(self._character_row(character))
 
     def load(self, session: Session) -> WorldState:
+        self._ensure_save_columns(session)
+        self._migrate_epoch(session)
         meta = session.get(WorldMetaRow, 1)
         if meta is None:
             raise RuntimeError("world is not initialized")
@@ -98,7 +111,8 @@ class Repository:
             row.is_player = character.is_player
             row.location_id = character.location_id
             row.fatigue = character.fatigue
-            row.goal = character.goal
+            row.goal = dump_goals(character.goals)
+            row.carried_parts = character.carried_parts
             row.current_action = character.current_action
             row.action_target = character.action_target
             row.traits_json = json.dumps(character.traits, ensure_ascii=False)
@@ -140,7 +154,8 @@ class Repository:
             is_player=character.is_player,
             location_id=character.location_id,
             fatigue=character.fatigue,
-            goal=character.goal,
+            goal=dump_goals(character.goals),
+            carried_parts=character.carried_parts,
             current_action=character.current_action,
             action_target=character.action_target,
             traits_json=json.dumps(character.traits, ensure_ascii=False),
@@ -155,9 +170,50 @@ class Repository:
             is_player=bool(row.is_player),
             location_id=row.location_id,
             fatigue=row.fatigue,
-            goal=row.goal,
+            goals=parse_stored_goals(row.goal),
+            carried_parts=int(row.carried_parts or 0),
             current_action=row.current_action,
             action_target=row.action_target,
             traits=list(json.loads(row.traits_json)),
             schedule=dict(json.loads(row.schedule_json)),
         )
+
+    def _table_exists(self, session: Session, table: str) -> bool:
+        row = session.execute(
+            text("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = :name"),
+            {"name": table},
+        ).first()
+        return row is not None
+
+    def _column_names(self, session: Session, table: str) -> set[str]:
+        if not self._table_exists(session, table):
+            return set()
+        rows = session.execute(text(f"PRAGMA table_info({table})")).all()
+        return {str(row[1]) for row in rows}
+
+    def _ensure_save_columns(self, session: Session) -> None:
+        """Add columns that v0.0.1 saves do not have. Existing rows stay."""
+        if self._table_exists(session, "characters") and "carried_parts" not in self._column_names(session, "characters"):
+            session.execute(
+                text("ALTER TABLE characters ADD COLUMN carried_parts INTEGER NOT NULL DEFAULT 0")
+            )
+        if self._table_exists(session, "world_meta") and "calendar_epoch" not in self._column_names(session, "world_meta"):
+            session.execute(text("ALTER TABLE world_meta ADD COLUMN calendar_epoch INTEGER"))
+
+    def _migrate_epoch(self, session: Session) -> None:
+        """Shift a 2061-epoch save onto 12 April 2036, once.
+
+        Elapsed game duration is preserved with datetime subtraction, so 10:30
+        stays 10:30. Real-world last_real_time is not touched. A row already
+        marked 2036 is left alone, including a second load of the same file.
+        """
+        meta = session.get(WorldMetaRow, 1)
+        if meta is None or meta.calendar_epoch == GAME_START.year:
+            return
+        moment = parse_game_time(meta.game_time)
+        if uses_old_epoch(moment):
+            meta.game_time = format_iso(shift_from_old_epoch(moment))
+            events = session.scalars(select(EventRow)).all()
+            for event in events:
+                event.game_time = format_iso(shift_from_old_epoch(parse_game_time(event.game_time)))
+        meta.calendar_epoch = GAME_START.year

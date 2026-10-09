@@ -16,6 +16,22 @@ class Location:
 
 
 @dataclass
+class Goal:
+    """A pursuit the engine can finish from world state.
+
+    `condition` is a key in the engine's completion table, not a sentence.
+    `threshold` is the number that condition compares against.
+    """
+
+    id: str
+    kind: str
+    status: str
+    label: str
+    condition: str
+    threshold: int = 0
+
+
+@dataclass
 class Character:
     id: str
     name: str
@@ -23,11 +39,12 @@ class Character:
     is_player: bool
     location_id: str
     fatigue: int
-    goal: str
     current_action: str
     action_target: str | None
     traits: list[str]
     schedule: dict[str, Any]
+    goals: list[Goal] = field(default_factory=list)
+    carried_parts: int = 0
 
 
 @dataclass
@@ -66,6 +83,7 @@ class ActionCandidate:
     score: int
     target: str | None = None
     reason: str = ""
+    target_character_id: str | None = None
 
 
 @dataclass(frozen=True)

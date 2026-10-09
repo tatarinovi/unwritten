@@ -10,6 +10,7 @@ from app.db.schema import EventRow
 from app.engine.dialogue import DialogueProvider
 from app.engine.effects import clamp, make_event
 from app.engine.errors import ActionError
+from app.engine.goals import display_goal, evaluate_goals, goal_payload
 from app.engine.models import Character, WorldState
 from app.engine.npc import run_npc_tick
 from app.engine.rng import CounterRNG
@@ -49,6 +50,7 @@ class WorldEngine:
         with self._lock:
             with self.repo.transaction() as session:
                 if self.repo.has_world(session):
+                    self._load(session)
                     return
                 chosen = self.content.default_seed if seed is None else seed
                 state = self.content.build_initial(chosen)
@@ -58,7 +60,7 @@ class WorldEngine:
                     make_event(
                         state,
                         "world_start",
-                        "Узел-17 просыпается. Обычное утро, 12 апреля 2061 года.",
+                        "Узел-17 просыпается. Обычное утро, 12 апреля 2036 года.",
                         None,
                     ),
                 )
@@ -66,12 +68,12 @@ class WorldEngine:
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
             with self.repo.transaction() as session:
-                return self._snapshot(self.repo.load(session))
+                return self._snapshot(self._load(session))
 
     def list_npcs(self) -> list[dict[str, Any]]:
         with self._lock:
             with self.repo.transaction() as session:
-                state = self.repo.load(session)
+                state = self._load(session)
                 return [self._npc_dict(npc) for npc in self._ordered_npcs(state, present_only=False)]
 
     def list_events(self, limit: int = 100) -> list[dict[str, Any]]:
@@ -92,11 +94,11 @@ class WorldEngine:
         character: dict[str, Any] | None = None,
         world_fields: dict[str, Any] | None = None,
     ) -> None:
-        allowed_character = {"location_id", "fatigue", "current_action", "action_target", "goal"}
+        allowed_character = {"location_id", "fatigue", "current_action", "action_target", "carried_parts"}
         allowed_world = {"threat_level", "grid_condition", "market_stock", "workshop_parts", "tick_count"}
         with self._lock:
             with self.repo.transaction() as session:
-                state = self.repo.load(session)
+                state = self._load(session)
                 if world_fields:
                     for key, value in world_fields.items():
                         if key not in allowed_world:
@@ -109,6 +111,8 @@ class WorldEngine:
                             continue
                         if key not in allowed_character:
                             raise ValueError(key)
+                        if key == "carried_parts":
+                            value = int(value)
                         setattr(npc, key, value)
                 self.repo.save_state(session, state)
 
@@ -129,7 +133,7 @@ class WorldEngine:
                 replay = self._replay(session, action_id)
                 if replay is not None:
                     return replay
-                state = self.repo.load(session)
+                state = self._load(session)
                 detail, player_events, minutes = self._apply_player_action(state, action_type, params)
                 self._slide_cursor(state, now)
                 npc_events = self._advance(state, minutes)
@@ -157,7 +161,7 @@ class WorldEngine:
                 replay = self._replay(session, action_id)
                 if replay is not None:
                     return replay
-                state = self.repo.load(session)
+                state = self._load(session)
                 npc = state.characters.get(npc_id)
                 if npc is None or npc.is_player:
                     raise ActionError("Такого человека здесь нет.")
@@ -196,7 +200,7 @@ class WorldEngine:
         now = ensure_utc(now)
         with self._lock:
             with self.repo.transaction() as session:
-                state = self.repo.load(session)
+                state = self._load(session)
                 if state.last_real_time is None:
                     state.last_real_time = now
                     self.repo.save_state(session, state)
@@ -317,11 +321,27 @@ class WorldEngine:
         locations = self.content.locations()
         for mark in tick_marks(start, minutes):
             state.game_time = mark
+            evaluate_goals(state)
+            self._sync_goals(state)
             events.extend(run_npc_tick(state, behaviors, locations, rng))
+            evaluate_goals(state)
+            self._sync_goals(state)
             self.content.after_tick(state, rng)
         state.game_time = add_minutes(start, minutes)
         state.rng_counter = rng.counter
         return events
+
+    def _load(self, session: Any) -> WorldState:
+        state = self.repo.load(session)
+        normalize = getattr(self.content, "normalize_goals", None)
+        if normalize is not None and normalize(state):
+            self.repo.save_state(session, state)
+        return state
+
+    def _sync_goals(self, state: WorldState) -> None:
+        sync = getattr(self.content, "sync_goals", None)
+        if sync is not None:
+            sync(state)
 
     def _slide_cursor(self, state: WorldState, now: datetime | None) -> None:
         if now is None:
@@ -351,7 +371,7 @@ class WorldEngine:
                 "fatigue": state.player.fatigue,
                 "status_label": self.content.player_status(state.player.fatigue),
                 "location_id": state.player.location_id,
-                "goal": state.player.goal,
+                "goal": display_goal(state.player),
             },
             "settlement": {
                 "name": self.content.settlement_name(),
@@ -416,7 +436,9 @@ class WorldEngine:
             "location_name": place.name,
             "fatigue": npc.fatigue,
             "fatigue_label": self.content.fatigue_label(npc.fatigue),
-            "goal": npc.goal,
+            "goal": display_goal(npc),
+            "goals": [goal_payload(goal) for goal in npc.goals],
+            "carried_parts": npc.carried_parts,
             "current_action": npc.current_action,
             "action_label": self.content.action_label(npc.current_action),
             "traits": list(npc.traits),
