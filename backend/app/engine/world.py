@@ -439,6 +439,7 @@ class WorldEngine:
             "goal": display_goal(npc),
             "goals": [goal_payload(goal) for goal in npc.goals],
             "carried_parts": npc.carried_parts,
+            "parts_result": npc.parts_result,
             "current_action": npc.current_action,
             "action_label": self.content.action_label(npc.current_action),
             "traits": list(npc.traits),

@@ -113,6 +113,7 @@ class Repository:
             row.fatigue = character.fatigue
             row.goal = dump_goals(character.goals)
             row.carried_parts = character.carried_parts
+            row.parts_result = character.parts_result
             row.current_action = character.current_action
             row.action_target = character.action_target
             row.traits_json = json.dumps(character.traits, ensure_ascii=False)
@@ -156,6 +157,7 @@ class Repository:
             fatigue=character.fatigue,
             goal=dump_goals(character.goals),
             carried_parts=character.carried_parts,
+            parts_result=character.parts_result,
             current_action=character.current_action,
             action_target=character.action_target,
             traits_json=json.dumps(character.traits, ensure_ascii=False),
@@ -172,6 +174,7 @@ class Repository:
             fatigue=row.fatigue,
             goals=parse_stored_goals(row.goal),
             carried_parts=int(row.carried_parts or 0),
+            parts_result=str(row.parts_result or ""),
             current_action=row.current_action,
             action_target=row.action_target,
             traits=list(json.loads(row.traits_json)),
@@ -196,6 +199,10 @@ class Repository:
         if self._table_exists(session, "characters") and "carried_parts" not in self._column_names(session, "characters"):
             session.execute(
                 text("ALTER TABLE characters ADD COLUMN carried_parts INTEGER NOT NULL DEFAULT 0")
+            )
+        if self._table_exists(session, "characters") and "parts_result" not in self._column_names(session, "characters"):
+            session.execute(
+                text("ALTER TABLE characters ADD COLUMN parts_result VARCHAR(16) NOT NULL DEFAULT ''")
             )
         if self._table_exists(session, "world_meta") and "calendar_epoch" not in self._column_names(session, "world_meta"):
             session.execute(text("ALTER TABLE world_meta ADD COLUMN calendar_epoch INTEGER"))

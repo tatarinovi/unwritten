@@ -35,6 +35,7 @@ class CharacterRow(Base):
     fatigue: Mapped[int] = mapped_column(Integer, nullable=False)
     goal: Mapped[str] = mapped_column(Text, nullable=False)
     carried_parts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    parts_result: Mapped[str] = mapped_column(String(16), nullable=False, default="")
     current_action: Mapped[str] = mapped_column(String(32), nullable=False)
     action_target: Mapped[str | None] = mapped_column(String(32), nullable=True)
     traits_json: Mapped[str] = mapped_column(Text, nullable=False)

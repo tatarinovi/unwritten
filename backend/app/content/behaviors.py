@@ -221,6 +221,10 @@ class EyraBehavior(NpcBehavior):
         marek = world.characters.get("marek")
         if marek is None or marek.is_player:
             return candidates
+        # A standing refusal pauses the errand. The goal stays active.
+        # She asks again only once Marek's accept check would pass.
+        if self._refusal_blocks(npc, marek, world):
+            return candidates
         seek = 100 + gap // 2 + parts_focus
         if marek.location_id == npc.location_id:
             candidates.append(
@@ -255,6 +259,9 @@ class EyraBehavior(NpcBehavior):
             if action.target_character_id != "marek":
                 return False
             if npc.carried_parts > 0 or world.workshop_parts > 0:
+                return False
+            marek = world.characters.get(action.target_character_id or "")
+            if marek is not None and self._refusal_blocks(npc, marek, world):
                 return False
             return has_active_goal(npc, OBTAIN_PARTS_ID) or needs_repair
         return super().precondition(npc, world, action, locations)
@@ -299,6 +306,8 @@ class EyraBehavior(NpcBehavior):
         marek = world.characters.get(action.target_character_id or "")
         if marek is None:
             return []
+        if self._refusal_blocks(npc, marek, world):
+            return []
         request = make_event(
             world,
             "npc_parts_request",
@@ -312,6 +321,7 @@ class EyraBehavior(NpcBehavior):
         npc.action_target = marek.id
         npc.fatigue = clamp(npc.fatigue + 2)
         if not self._marek_accepts(npc, marek, world):
+            npc.parts_result = "refused"
             return [
                 request,
                 make_event(
@@ -332,6 +342,7 @@ class EyraBehavior(NpcBehavior):
         gain = int(npc.schedule["parts_gain"])
         world.market_stock = clamp(world.market_stock - cost)
         npc.carried_parts += gain
+        npc.parts_result = "handover"
         npc.current_action = "carry_parts"
         npc.fatigue = clamp(npc.fatigue + 1)
         return [
@@ -351,6 +362,14 @@ class EyraBehavior(NpcBehavior):
                 },
             ),
         ]
+
+    def _refusal_blocks(self, eyra: Character, marek: Character, world: WorldState) -> bool:
+        # Remember the refusal. Ask again only when the same accept check
+        # would now pass (profit goal: stock - cost >= work_min_stock, so 20).
+        # No cooldown: a later drop back under that line keeps the block.
+        if eyra.parts_result != "refused":
+            return False
+        return not self._marek_accepts(eyra, marek, world)
 
     def _eyra_needs_bundle(self, eyra: Character, world: WorldState) -> bool:
         # Short-term goal, or the grid is down and the workshop is empty.

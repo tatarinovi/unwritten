@@ -45,6 +45,9 @@ class Character:
     schedule: dict[str, Any]
     goals: list[Goal] = field(default_factory=list)
     carried_parts: int = 0
+    # Last parts exchange with Marek: "", "refused", or "handover".
+    # A refusal blocks the same request until his accept check would pass.
+    parts_result: str = ""
 
 
 @dataclass

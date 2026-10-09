@@ -233,6 +233,154 @@ def test_handover_then_delivery_changes_stock_only_at_each_step(world) -> None:
     assert delivered[0]["data"]["workshop_parts_delta"] == 4
 
 
+def _hold_refused_stock(world, ticks: int, tag: str) -> None:
+    """Keep the refusal line true for `ticks` ten-minute steps.
+
+    Marek is held too tired to restock, and stock is put back to 19 before
+    each tick. Either change would otherwise clear the refusal and hide a loop.
+    Eyra's own action and fatigue are left alone.
+    """
+    for index in range(ticks):
+        world.update_for_test(
+            world_fields={"market_stock": 19, "workshop_parts": 0, "grid_condition": 30},
+        )
+        world.update_for_test(
+            character={"id": "marek", "location_id": "market", "fatigue": 96, "current_action": "rest"},
+        )
+        world.perform("wait", {"minutes": 10}, f"{tag}-{index}")
+
+
+def _part_kinds(world) -> list[str]:
+    return [event["kind"] for event in world.list_events(limit=5000)]
+
+
+def test_tc01_refusal_at_stock_19(world) -> None:
+    _prime(world, stock=19, eyra_at="market", marek_at="market", parts=0, grid=30)
+    world.perform("wait", {"minutes": 10}, "tc01-refuse")
+    eyra = npc_by_id(world, "eyra")
+    settlement = world.snapshot()["settlement"]
+    assert settlement["market_stock"] == 19
+    assert settlement["workshop_parts"] == 0
+    assert eyra["carried_parts"] == 0
+    kinds = _part_kinds(world)
+    assert kinds.count("npc_parts_request") == 1
+    assert kinds.count("npc_parts_refused") == 1
+    assert "npc_parts_handover" not in kinds
+    assert len(_active(eyra, "obtain_parts")) == 1
+    assert eyra["parts_result"] == "refused"
+
+
+def test_tc02_no_infinite_refusal_loop(world) -> None:
+    _prime(world, stock=19, eyra_at="market", marek_at="market", parts=0, grid=30)
+    _hold_refused_stock(world, 6 * 6, "tc02")
+    eyra = npc_by_id(world, "eyra")
+    settlement = world.snapshot()["settlement"]
+    kinds = _part_kinds(world)
+    assert kinds.count("npc_parts_request") == 1
+    assert kinds.count("npc_parts_refused") == 1
+    assert "npc_parts_handover" not in kinds
+    assert eyra["current_action"] != "request_parts"
+    assert eyra["parts_result"] == "refused"
+    assert eyra["carried_parts"] == 0
+    assert settlement["market_stock"] == 19
+    assert settlement["workshop_parts"] == 0
+    assert len(_active(eyra, "obtain_parts")) == 1
+    assert eyra["goal"] == "Достать детали для сети"
+
+
+def test_tc03_retry_when_stock_reaches_accept_line(world) -> None:
+    _prime(world, stock=19, eyra_at="market", marek_at="market", parts=0, grid=30)
+    world.perform("wait", {"minutes": 10}, "tc03-refuse")
+    assert npc_by_id(world, "eyra")["parts_result"] == "refused"
+    world.update_for_test(world_fields={"market_stock": 20, "workshop_parts": 0, "grid_condition": 30})
+    world.update_for_test(
+        character={"id": "marek", "location_id": "market", "fatigue": 96, "current_action": "rest"},
+    )
+    world.update_for_test(character={"id": "eyra", "location_id": "market", "fatigue": 10})
+    world.perform("wait", {"minutes": 10}, "tc03-retry")
+    eyra = npc_by_id(world, "eyra")
+    settlement = world.snapshot()["settlement"]
+    assert settlement["market_stock"] == 12
+    assert settlement["workshop_parts"] == 0
+    assert eyra["carried_parts"] == 4
+    assert eyra["parts_result"] == "handover"
+    kinds = _part_kinds(world)
+    assert kinds.count("npc_parts_handover") == 1
+    assert len(_active(eyra, "obtain_parts")) == 1
+
+
+def test_tc04_refusal_latch_persists(tmp_path: Path) -> None:
+    path = tmp_path / "latch.db"
+    engine = open_world(path)
+    try:
+        _prime(engine, stock=19, eyra_at="market", marek_at="market", parts=0, grid=30)
+        engine.perform("wait", {"minutes": 10}, "tc04-refuse")
+        assert npc_by_id(engine, "eyra")["parts_result"] == "refused"
+    finally:
+        engine.close()
+
+    restored = open_world(path)
+    try:
+        eyra = npc_by_id(restored, "eyra")
+        assert eyra["parts_result"] == "refused"
+        assert len(_active(eyra, "obtain_parts")) == 1
+        before = _part_kinds(restored).count("npc_parts_request")
+        assert before == 1
+        _hold_refused_stock(restored, 6 * 6, "tc04")
+        eyra = npc_by_id(restored, "eyra")
+        kinds = _part_kinds(restored)
+        assert kinds.count("npc_parts_request") == before
+        assert kinds.count("npc_parts_refused") == 1
+        assert eyra["parts_result"] == "refused"
+        assert eyra["current_action"] != "request_parts"
+        assert eyra["carried_parts"] == 0
+        assert restored.snapshot()["settlement"]["market_stock"] == 19
+    finally:
+        restored.close()
+
+
+def test_tc05_regression_transfer_delivery_goals_and_time(world) -> None:
+    content = Node17Content()
+    state = content.build_initial(1)
+    eyra_state = state.characters["eyra"]
+    state.workshop_parts = 0
+    state.grid_condition = 30
+    state.market_stock = 40
+    eyra_state.goals = [goal for goal in eyra_state.goals if goal.id != "obtain_parts"]
+    seek_without = _score(EyraBehavior(), eyra_state, state, "travel")
+    ensure_active_goal(eyra_state, obtain_parts_goal())
+    seek_with = _score(EyraBehavior(), eyra_state, state, "travel")
+    assert seek_with > seek_without
+
+    _prime(world, stock=40, eyra_at="market", marek_at="market", parts=0, grid=30)
+    world.perform("wait", {"minutes": 10}, "tc05-handover")
+    eyra = npc_by_id(world, "eyra")
+    settlement = world.snapshot()["settlement"]
+    assert world.snapshot()["time"] == "2036-04-12T08:10:00"
+    assert settlement["market_stock"] == 32
+    assert settlement["workshop_parts"] == 0
+    assert eyra["carried_parts"] == 4
+    assert eyra["goal"] == "Достать детали для сети"
+    assert len(_active(eyra, "obtain_parts")) == 1
+
+    world.update_for_test(character={"id": "eyra", "location_id": "workshop", "fatigue": 10})
+    world.update_for_test(character={"id": "marek", "fatigue": 96, "location_id": "market"})
+    world.perform("wait", {"minutes": 10}, "tc05-deliver")
+    eyra = npc_by_id(world, "eyra")
+    settlement = world.snapshot()["settlement"]
+    assert world.snapshot()["time"] == "2036-04-12T08:20:00"
+    assert eyra["carried_parts"] == 0
+    assert settlement["workshop_parts"] == 4
+    assert settlement["market_stock"] == 32
+    assert _active(eyra, "obtain_parts") == []
+    assert eyra["goal"] == "Держать энергосеть"
+    delivered = [event for event in world.list_events(limit=5000) if event["kind"] == "npc_parts_delivery"]
+    assert len(delivered) == 1
+
+    world.perform("wait", {"minutes": 60}, "tc05-hour")
+    assert world.snapshot()["time"] == "2036-04-12T09:20:00"
+
+
 def test_refusal_leaves_stock_and_workshop_unchanged(world) -> None:
     _prime(world, stock=15, eyra_at="market", marek_at="market", parts=0, grid=30)
     world.perform("wait", {"minutes": 10}, "refuse")
