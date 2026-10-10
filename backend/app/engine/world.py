@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+import logging
 import threading
 from datetime import datetime
 from typing import Any
 
 from app.db.repository import Repository
 from app.db.schema import EventRow
+from app.dialogue.service import LivingDialogue, message_views
 from app.engine.dialogue import DialogueProvider
 from app.engine.effects import clamp, make_event
 from app.engine.errors import ActionError
@@ -29,6 +31,9 @@ from app.engine.timekeep import (
     tick_marks,
 )
 
+logger = logging.getLogger("unwritten.dialogue")
+HISTORY_LIMIT = 40
+
 
 class WorldEngine:
     """Game time, movement, NPC ticks, and one-transaction saves.
@@ -37,10 +42,17 @@ class WorldEngine:
     asks a DialogueProvider for lines and does not know whether they are templates.
     """
 
-    def __init__(self, repository: Repository, content: Any, dialogue: DialogueProvider) -> None:
+    def __init__(
+        self,
+        repository: Repository,
+        content: Any,
+        dialogue: DialogueProvider,
+        living: LivingDialogue,
+    ) -> None:
         self.repo = repository
         self.content = content
         self.dialogue = dialogue
+        self.living = living
         self._lock = threading.RLock()
 
     def close(self) -> None:
@@ -152,10 +164,15 @@ class WorldEngine:
         action_id: str,
         reply_id: str | None = None,
         now: datetime | None = None,
+        text: str | None = None,
+        use_template: bool = False,
+        inject_failure: bool = False,
     ) -> dict[str, Any]:
         action_id = action_id.strip()
         if not action_id:
             raise ActionError("Нужен идентификатор действия.")
+        if text is not None:
+            return self._speak_free(npc_id, action_id, text, use_template, now, inject_failure)
         with self._lock:
             with self.repo.transaction() as session:
                 replay = self._replay(session, action_id)
@@ -194,6 +211,114 @@ class WorldEngine:
                         "note": note,
                     },
                     False,
+                )
+
+    def conversation(self, npc_id: str) -> dict[str, Any]:
+        with self._lock:
+            with self.repo.transaction() as session:
+                state = self._load(session)
+                npc = state.characters.get(npc_id)
+                if npc is None or npc.is_player:
+                    raise ActionError("Такого человека здесь нет.")
+                if npc.location_id != state.player.location_id:
+                    raise ActionError("Этого человека сейчас нет рядом.")
+                rows = self.repo.list_dialogue(session, npc_id, HISTORY_LIMIT)
+                return {
+                    "npc_id": npc.id,
+                    "npc_name": npc.name,
+                    "role": npc.role,
+                    "speech": self.living.speech_mode(npc.id),
+                    "messages": message_views(rows),
+                }
+
+    def _speak_free(
+        self,
+        npc_id: str,
+        action_id: str,
+        text: str,
+        use_template: bool,
+        now: datetime | None,
+        inject_failure: bool,
+    ) -> dict[str, Any]:
+        # Same order as the LivingDialogue docstring. The lock stops other
+        # actions from ticking NPCs during the model wait. The database
+        # transaction is closed before that wait and opened again to apply.
+        with self._lock:
+            with self.repo.transaction() as session:
+                replay = self._replay(session, action_id)
+                if replay is not None:
+                    logger.info("dialogue_duplicate npc=%s", npc_id)
+                    return replay
+                state = self._load(session)
+                prepared = self.living.prepare(
+                    self.repo,
+                    session,
+                    state,
+                    npc_id,
+                    text,
+                    use_template=use_template,
+                )
+            reply_text = ""
+            source = "template"
+            if not use_template:
+                reply_text = self.living.generate(prepared)
+                source = "llm"
+            with self.repo.transaction() as session:
+                replay = self._replay(session, action_id)
+                if replay is not None:
+                    logger.info("dialogue_duplicate npc=%s", npc_id)
+                    return replay
+                state = self._load(session)
+                npc = state.characters.get(npc_id)
+                if npc is None or npc.is_player or npc.location_id != state.player.location_id:
+                    raise ActionError("Этого человека сейчас нет рядом.")
+                if use_template:
+                    reply_text = self.living.fallback_line(npc, state)
+                    source = "template"
+                self.living.remember(
+                    self.repo,
+                    session,
+                    state,
+                    npc,
+                    prepared.text,
+                    reply_text,
+                    source,
+                    action_id,
+                )
+                event = make_event(
+                    state,
+                    "dialogue",
+                    self.content.talk_log(npc_id),
+                    state.player.id,
+                    {"npc_id": npc_id, "source": source},
+                )
+                state.player.fatigue = clamp(state.player.fatigue + 1)
+                self._slide_cursor(state, now)
+                npc_events = self._advance(state, TALK_MINUTES)
+                still_here = state.characters[npc_id].location_id == state.player.location_id
+                note = None
+                if source == "template":
+                    note = "Заготовленная реплика: языковая модель не использовалась."
+                if not still_here:
+                    gone = f"{npc.name} уже не рядом. Разговор окончен."
+                    note = f"{note} {gone}" if note else gone
+                messages = message_views(self.repo.list_dialogue(session, npc_id, HISTORY_LIMIT))
+                return self._persist(
+                    session,
+                    state,
+                    action_id,
+                    [event, *npc_events],
+                    {
+                        "npc_id": npc.id,
+                        "npc_name": npc.name,
+                        "role": npc.role,
+                        "line": reply_text,
+                        "options": [],
+                        "note": note,
+                        "source": source,
+                        "messages": messages,
+                    },
+                    inject_failure,
                 )
 
     def resume(self, now: datetime) -> dict[str, Any]:
@@ -406,7 +531,7 @@ class WorldEngine:
                 {
                     "type": "talk",
                     "label": self.content.talk_label(npc.id),
-                    "params": {"npc_id": npc.id},
+                    "params": {"npc_id": npc.id, "dialogue": self.living.speech_mode(npc.id)},
                 }
             )
         actions.append({"type": "wait", "label": "Подождать 10 минут", "params": {"minutes": 10}})
@@ -443,6 +568,7 @@ class WorldEngine:
             "current_action": npc.current_action,
             "action_label": self.content.action_label(npc.current_action),
             "traits": list(npc.traits),
+            "dialogue": self.living.speech_mode(npc.id),
         }
 
     def _event_dict(self, row: EventRow) -> dict[str, Any]:

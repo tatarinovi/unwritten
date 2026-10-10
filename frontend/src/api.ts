@@ -1,4 +1,4 @@
-import type { ActionResponse, Dialogue, GameEvent, World } from "./types";
+import type { ActionResponse, Conversation, Dialogue, GameEvent, World } from "./types";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response;
@@ -59,7 +59,13 @@ export function speak(body: {
   action_id: string;
   npc_id: string;
   reply_id?: string;
+  text?: string;
+  use_template?: boolean;
   now: string;
 }): Promise<Dialogue> {
   return post<Dialogue>("/api/dialogue", body);
+}
+
+export function conversation(npcId: string): Promise<Conversation> {
+  return request<Conversation>(`/api/dialogue/${encodeURIComponent(npcId)}`);
 }

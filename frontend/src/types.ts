@@ -62,13 +62,33 @@ export type GameEvent = {
   data: Record<string, string | number | null>;
 };
 
+export type DialogueMessage = {
+  id: number;
+  role: "player" | "npc";
+  text: string;
+  time: string;
+  clock: string;
+  source: "player" | "llm" | "template";
+};
+
+export type Conversation = {
+  npc_id: string;
+  npc_name: string;
+  role: string;
+  speech: "llm" | "template";
+  messages: DialogueMessage[];
+};
+
 export type Dialogue = {
   replayed: boolean;
   npc_id: string;
   npc_name: string;
+  role?: string;
   line: string;
   options: { id: string; label: string }[];
   note: string | null;
+  source?: "llm" | "template";
+  messages?: DialogueMessage[];
   world: World;
 };
 

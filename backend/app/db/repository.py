@@ -7,7 +7,15 @@ from collections.abc import Iterator
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
-from app.db.schema import Base, CharacterRow, EventRow, ProcessedActionRow, WorldMetaRow
+from app.db.schema import (
+    Base,
+    CharacterRow,
+    DialogueMessageRow,
+    EventRow,
+    NpcMemoryRow,
+    ProcessedActionRow,
+    WorldMetaRow,
+)
 from app.db.session import make_engine, make_session_factory
 from app.engine.goals import dump_goals, parse_stored_goals
 from app.engine.models import Character, GameEvent, WorldState
@@ -134,6 +142,15 @@ class Repository:
         rows = session.scalars(select(EventRow).order_by(EventRow.id.desc()).limit(limit)).all()
         return list(reversed(rows))
 
+    def list_events_by_kinds(self, session: Session, kinds: tuple[str, ...], limit: int) -> list[EventRow]:
+        """Recent events of the given kinds, oldest first. No schema change."""
+        if not kinds or limit <= 0:
+            return []
+        rows = session.scalars(
+            select(EventRow).where(EventRow.kind.in_(kinds)).order_by(EventRow.id.desc()).limit(limit)
+        ).all()
+        return list(reversed(rows))
+
     def count_events(self, session: Session) -> int:
         value = session.scalar(select(func.count()).select_from(EventRow))
         return int(value or 0)
@@ -146,6 +163,70 @@ class Repository:
 
     def save_processed(self, session: Session, action_id: str, response_json: str) -> None:
         session.add(ProcessedActionRow(action_id=action_id, response_json=response_json))
+
+    def list_dialogue(self, session: Session, npc_id: str, limit: int) -> list[DialogueMessageRow]:
+        rows = session.scalars(
+            select(DialogueMessageRow)
+            .where(DialogueMessageRow.npc_id == npc_id)
+            .order_by(DialogueMessageRow.id.desc())
+            .limit(limit)
+        ).all()
+        return list(reversed(rows))
+
+    def add_dialogue(
+        self,
+        session: Session,
+        *,
+        npc_id: str,
+        role: str,
+        body: str,
+        game_time: str,
+        source: str,
+        request_id: str,
+    ) -> None:
+        session.add(
+            DialogueMessageRow(
+                npc_id=npc_id,
+                role=role,
+                body=body,
+                game_time=game_time,
+                source=source,
+                request_id=request_id,
+            )
+        )
+
+    def list_memory(self, session: Session, npc_id: str, limit: int) -> list[NpcMemoryRow]:
+        rows = session.scalars(
+            select(NpcMemoryRow)
+            .where(NpcMemoryRow.npc_id == npc_id)
+            .order_by(NpcMemoryRow.id.desc())
+            .limit(limit)
+        ).all()
+        return list(reversed(rows))
+
+    def add_memory(
+        self,
+        session: Session,
+        *,
+        npc_id: str,
+        body: str,
+        kind: str,
+        source: str,
+        game_time: str,
+        confirmed: bool,
+        request_id: str,
+    ) -> None:
+        session.add(
+            NpcMemoryRow(
+                npc_id=npc_id,
+                body=body,
+                kind=kind,
+                source=source,
+                game_time=game_time,
+                confirmed=confirmed,
+                request_id=request_id,
+            )
+        )
 
     def _character_row(self, character: Character) -> CharacterRow:
         return CharacterRow(

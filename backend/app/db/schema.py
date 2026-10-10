@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import Boolean, Integer, String, Text
+from sqlalchemy import Boolean, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -58,3 +58,36 @@ class ProcessedActionRow(Base):
 
     action_id: Mapped[str] = mapped_column(String(80), primary_key=True)
     response_json: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class DialogueMessageRow(Base):
+    __tablename__ = "dialogue_messages"
+    __table_args__ = (UniqueConstraint("request_id", "role", name="uq_dialogue_request_role"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    request_id: Mapped[str] = mapped_column(String(80), nullable=False)
+    npc_id: Mapped[str] = mapped_column(String(32), nullable=False)
+    role: Mapped[str] = mapped_column(String(16), nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    game_time: Mapped[str] = mapped_column(String(32), nullable=False)
+    source: Mapped[str] = mapped_column(String(16), nullable=False)
+
+
+class NpcMemoryRow(Base):
+    """One NPC's memory. Rows are never copied to another character.
+
+    A later social memory would be an explicit write for one npc_id, with its
+    own source. It is not a merge of these rows and it does not exist yet.
+    """
+
+    __tablename__ = "npc_memory"
+    __table_args__ = (UniqueConstraint("request_id", "kind", name="uq_memory_request_kind"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    request_id: Mapped[str] = mapped_column(String(80), nullable=False)
+    npc_id: Mapped[str] = mapped_column(String(32), nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    source: Mapped[str] = mapped_column(String(32), nullable=False)
+    game_time: Mapped[str] = mapped_column(String(32), nullable=False)
+    confirmed: Mapped[bool] = mapped_column(Boolean, nullable=False)

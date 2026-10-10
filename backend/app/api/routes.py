@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 
 from app.engine.errors import ActionError
 from app.engine.world import WorldEngine
+from app.llm.errors import LLMFailure
 
 router = APIRouter()
 
@@ -23,6 +24,8 @@ class DialogueRequest(BaseModel):
     action_id: str = Field(min_length=1, max_length=80)
     npc_id: str = Field(min_length=1, max_length=32)
     reply_id: str | None = None
+    text: str | None = Field(default=None, max_length=1000)
+    use_template: bool = False
     now: datetime | None = None
 
 
@@ -36,7 +39,7 @@ def _world(request: Request) -> WorldEngine:
 
 @router.get("/api/health")
 def health() -> dict[str, str]:
-    return {"name": "UNWRITTEN", "version": "0.0.1"}
+    return {"name": "UNWRITTEN", "version": "0.0.3"}
 
 
 @router.get("/api/world")
@@ -62,10 +65,27 @@ def post_action(body: ActionRequest, request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail=exc.message) from exc
 
 
+@router.get("/api/dialogue/{npc_id}")
+def get_dialogue(npc_id: str, request: Request) -> dict[str, Any]:
+    try:
+        return _world(request).conversation(npc_id)
+    except ActionError as exc:
+        raise HTTPException(status_code=400, detail=exc.message) from exc
+
+
 @router.post("/api/dialogue")
 def post_dialogue(body: DialogueRequest, request: Request) -> dict[str, Any]:
     try:
-        return _world(request).speak(body.npc_id, body.action_id, body.reply_id, body.now)
+        return _world(request).speak(
+            body.npc_id,
+            body.action_id,
+            body.reply_id,
+            body.now,
+            text=body.text,
+            use_template=body.use_template,
+        )
+    except LLMFailure as exc:
+        raise HTTPException(status_code=503, detail=exc.message) from exc
     except ActionError as exc:
         raise HTTPException(status_code=400, detail=exc.message) from exc
 
